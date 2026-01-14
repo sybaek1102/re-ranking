@@ -205,3 +205,17 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# 추가
+# 1. Raw 데이터 폴더 무시 (로컬에만 보존)
+data/raw/
+
+# 2. Features 폴더 무시 (요청하신 대로 로컬에만 보존)
+src/features/
+# (혹시 'data/input'에 있는 npz 파일을 말씀하신 거라면 'data/input/'을 적으세요)
+
+# 3. 기타 시스템 파일 등
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+# *.npz  # (선택) 모든 npz 파일을 아예 무시하고 싶다면 추가
