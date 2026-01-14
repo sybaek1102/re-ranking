@@ -7,9 +7,6 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import roc_auc_score, accuracy_score, precision_recall_fscore_support, roc_curve
 import os
 
-# -----------------------------------------------------------------------------
-# [Step 0] 설정: 경로 및 파라미터
-# -----------------------------------------------------------------------------
 # 파일 경로 설정 (상대 경로 사용)
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(SCRIPT_DIR, "../../data")
@@ -22,14 +19,12 @@ LOG_PATH = os.path.join(OUTPUT_DIR, "logs", "re-ranking_mlp.csv")
 # 하이퍼파라미터
 BATCH_SIZE = 128
 LEARNING_RATE = 0.001
-EPOCHS = 50
+EPOCHS = 100
 VAL_RATIO = 0.1
-THRESHOLD = 0.5  # 필요하다면 최적값으로 변경하세요
+THRESHOLD = 0.5
 
-# -----------------------------------------------------------------------------
-# [Step 1] 데이터 로드 및 전처리
-# -----------------------------------------------------------------------------
-print(">>> 데이터 로딩 중...")
+# 1. 데이터 load & 전처리
+print("\n1. 데이터 load & 전처리")
 if not os.path.exists(INPUT_PATH):
     print(f"파일이 존재하지 않습니다: {INPUT_PATH}")
     exit()
@@ -37,11 +32,13 @@ if not os.path.exists(INPUT_PATH):
 data = np.load(INPUT_PATH)
 dataset = data['data'] 
 
-# Feature(X)와 Label(y) 분리
 X_numpy = dataset[:, :-1].astype(np.float32)
 y_numpy = dataset[:, -1].astype(np.float32).reshape(-1, 1)
+print(f"  - Feature Shape: {X_numpy.shape}")     # (10000, 16)
+print(f"  - Label Shape: {y_numpy.shape}")       # (10000, 1)
 
-# Train / Validation Split
+# 2. train & val split
+print("\n2. train & val split")
 X_train, X_val, y_train, y_val = train_test_split(
     X_numpy, y_numpy, test_size=VAL_RATIO, random_state=42, stratify=y_numpy
 )
@@ -50,12 +47,11 @@ X_train_tensor = torch.tensor(X_train)
 y_train_tensor = torch.tensor(y_train)
 X_val_tensor = torch.tensor(X_val)
 y_val_tensor = torch.tensor(y_val)
+print(f"  - Train Samples: {len(X_train_tensor)}")
+print(f"  - Val Samples: {len(X_val_tensor)}")
 
-print(f"Train Set: {X_train.shape}, Val Set: {X_val.shape}")
-
-# -----------------------------------------------------------------------------
-# [Step 2] 모델 정의
-# -----------------------------------------------------------------------------
+# 3. MLP model 설계
+print("\n3. MLP model 설계")
 class SimpleMLP(nn.Module):
     def __init__(self):
         super(SimpleMLP, self).__init__()
@@ -69,16 +65,17 @@ class SimpleMLP(nn.Module):
     def forward(self, x):
         return self.network(x)
 
+# 모델 초기화
 model = SimpleMLP()
 criterion = nn.BCELoss()
 optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
+print(model)
 
-# -----------------------------------------------------------------------------
-# [Step 3] 학습 Loop 및 로그 기록
-# -----------------------------------------------------------------------------
+# 4. main
+print(f"\n4. main 학습 시작 (Total Epochs: {EPOCHS}, Threshold: {THRESHOLD})")
 history = [] 
-
-print(f">>> 학습 시작 (Total Epochs: {EPOCHS}, Threshold: {THRESHOLD})")
+best_val_acc = 0.0
+best_epoch_info = None
 
 for epoch in range(1, EPOCHS + 1):
     # --- [Training Phase] ---
@@ -104,62 +101,59 @@ for epoch in range(1, EPOCHS + 1):
         train_probs_list.append(outputs.detach().cpu().numpy())
         train_labels_list.append(batch_y.detach().cpu().numpy())
 
-    # Train Metrics
+    # train summary
     train_probs_concat = np.concatenate(train_probs_list)
     train_labels_concat = np.concatenate(train_labels_list)
-    avg_train_loss = epoch_loss / (len(X_train_tensor) // BATCH_SIZE)
+    avg_t_loss = epoch_loss / (len(X_train_tensor) // BATCH_SIZE)
     
-    train_auc = roc_auc_score(train_labels_concat, train_probs_concat)
+    t_auc = roc_auc_score(train_labels_concat, train_probs_concat)
     train_preds = (train_probs_concat >= THRESHOLD).astype(int)
-    train_acc = accuracy_score(train_labels_concat, train_preds)
+    t_acc = accuracy_score(train_labels_concat, train_preds)
     
-    # Train Precision & Recall (Class 0, 1 각각)
-    tr_prec, tr_rec, _, _ = precision_recall_fscore_support(
+    t_prec, t_rec, _, _ = precision_recall_fscore_support(
         train_labels_concat, train_preds, average=None, zero_division=0
     )
 
-    # --- [Validation Phase] ---
+    # validation
     model.eval()
     with torch.no_grad():
         val_outputs = model(X_val_tensor)
-        val_loss = criterion(val_outputs, y_val_tensor).item()
+        v_loss = criterion(val_outputs, y_val_tensor).item()
         
         val_probs = val_outputs.cpu().numpy()
         val_labels = y_val_tensor.cpu().numpy()
         
-        val_auc = roc_auc_score(val_labels, val_probs)
+        v_auc = roc_auc_score(val_labels, val_probs)
         val_preds = (val_probs >= THRESHOLD).astype(int)
-        val_acc = accuracy_score(val_labels, val_preds)
+        v_acc = accuracy_score(val_labels, val_preds)
 
-        # Validation Precision & Recall (Class 0, 1 각각)
-        val_prec, val_rec, _, _ = precision_recall_fscore_support(
+        v_prec, v_rec, _, _ = precision_recall_fscore_support(
             val_labels, val_preds, average=None, zero_division=0
         )
 
-    # --- [Logging] ---
+    # Log
     log_entry = {
         "epoch": epoch,
-        "train_loss": avg_train_loss,
-        "val_loss": val_loss,
-        "train_acc": train_acc,
-        "val_acc": val_acc,
-        "train_auc": train_auc,
-        "val_auc": val_auc,
-        "train_prec0": tr_prec[0],
-        "val_prec0": val_prec[0],
-        "train_prec1": tr_prec[1],
-        "val_prec1": val_prec[1],
-        "train_rec0": tr_rec[0],
-        "val_rec0": val_rec[0],
-        "train_rec1": tr_rec[1],
-        "val_rec1": val_rec[1],
+        "train_loss": avg_t_loss, "val_loss": v_loss,
+        "train_acc": t_acc, "val_acc": v_acc,
+        "train_auc": t_auc, "val_auc": v_auc,
+        "train_prec0": t_prec[0], "val_prec0": v_prec[0],
+        "train_prec1": t_prec[1], "val_prec1": v_prec[1],
+        "train_rec0": t_rec[0], "val_rec0": v_rec[0],
+        "train_rec1": t_rec[1], "val_rec1": v_rec[1],
     }
     history.append(log_entry)
 
-    if epoch % 5 == 0:
-        print(f"Epoch [{epoch}/{EPOCHS}] Loss: {avg_train_loss:.4f} | "
-              f"Val Acc: {val_acc:.4f} | "
-              f"Val P1: {val_prec[1]:.4f} R1: {val_rec[1]:.4f}")
+    # Best Model Check (val loss 기준)
+    if v_loss > 0:
+        if best_epoch_info is None or v_loss < best_epoch_info['val_loss']:
+            best_val_acc = v_acc
+            best_epoch_info = log_entry
+    
+    # Console Log
+    print(f"Epoch [{epoch}/{EPOCHS}] "
+            f"Loss:{avg_t_loss:.4f} | Acc:{t_acc:.4f}/{v_acc:.4f} | AUC:{v_auc:.4f} | "
+            f"R0:{v_rec[0]:.4f} R1:{v_rec[1]:.4f}")
 
 # -----------------------------------------------------------------------------
 # [Step 4] 로그 파일 저장
