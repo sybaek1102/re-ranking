@@ -1,0 +1,314 @@
+import os
+import numpy as np
+import matplotlib.pyplot as plt
+
+# ======================== 경로 설정 ========================
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(SCRIPT_DIR, "../../data")
+INPUT_DIR = os.path.join(DATA_DIR, "input")
+OUTPUT_DIR = os.path.join(DATA_DIR, "output")
+RESULTS_DIR = os.path.join(SCRIPT_DIR, "../../results/analysis")
+
+# 입력 파일 경로
+RANK_PATH = os.path.join(INPUT_DIR, "re-ranking_analysis_rank.npz")
+FEATURES_PATH = os.path.join(INPUT_DIR, "re-ranking_features.npz")
+OOF_PATH = os.path.join(OUTPUT_DIR, "oof", "re-ranking_mlp_oof.npz")
+
+# 출력 파일 경로
+os.makedirs(RESULTS_DIR, exist_ok=True)
+
+# ======================== 데이터 로드 ========================
+print(">>> 데이터 로딩 중...")
+
+# 1. 랭킹 데이터 (10000, 1)
+rank_data = np.load(RANK_PATH)
+ranking = rank_data['positions']  # (10000, 1)
+print(f"  - Ranking shape: {ranking.shape}")
+
+# 2. 정답 label (10000, 17)의 마지막 열
+features_data = np.load(FEATURES_PATH)
+dataset = features_data['data']
+true_labels = dataset[:, -1].reshape(-1, 1)  # (10000, 1)
+print(f"  - True labels shape: {true_labels.shape}")
+
+# 3. 예측 label (10000, 2)의 마지막 열
+oof_data = np.load(OOF_PATH)
+pred_labels = oof_data['pred_label']  # (10000, 1)
+print(f"  - Pred labels shape: {pred_labels.shape}")
+
+# ======================== 정답 label=1인 인덱스 필터링 ========================
+print("\n>>> 정답 label=1인 데이터 필터링...")
+positive_mask = (true_labels == 1).flatten()
+print(f"  - 정답 label=1 개수: {positive_mask.sum()}")
+
+# 해당 인덱스로 데이터 추출
+ranking_filtered = ranking[positive_mask]
+pred_labels_filtered = pred_labels[positive_mask]
+
+# ======================== 랭킹 검증 (랭킹=1 제외) ========================
+print("\n>>> 랭킹 검증 (랭킹=1 제외)...")
+valid_mask = (ranking_filtered != 1).flatten()
+print(f"  - 랭킹=1인 데이터 개수: {(~valid_mask).sum()}")
+print(f"  - 랭킹≠1인 데이터 개수: {valid_mask.sum()}")
+
+# 랭킹≠1인 데이터만 사용
+ranking_valid = ranking_filtered[valid_mask]
+pred_labels_valid = pred_labels_filtered[valid_mask]
+
+# ======================== TP / FN 분류 ========================
+print("\n>>> TP / FN 분류...")
+tp_mask = (pred_labels_valid == 1).flatten()
+fn_mask = (pred_labels_valid == 0).flatten()
+
+tp_ranking = ranking_valid[tp_mask]
+fn_ranking = ranking_valid[fn_mask]
+
+tp_count = tp_mask.sum()
+fn_count = fn_mask.sum()
+
+print(f"  - TP 개수: {tp_count}")
+print(f"  - FN 개수: {fn_count}")
+
+# ======================== 랭킹 분포 분석 ========================
+print("\n>>> 랭킹 분포 분석...")
+
+# 로그 스케일 범위 정의: 10^1 이하(2-10), 10^2 이하(11-100), 10^3 이하(101-1000)
+bins = [2, 11, 101, 1001]
+bin_labels = ['10^1 (2-10)', '10^2 (11-100)', '10^3 (101-1000)']
+
+def compute_distribution(ranking_data, total_count, label="TP"):
+    """랭킹 분포 계산 및 출력"""
+    print(f"\n[{label} 분포 - 로그 스케일]")
+    counts = []
+    ratios = []
+    
+    for i in range(len(bins) - 1):
+        mask = (ranking_data >= bins[i]) & (ranking_data < bins[i+1])
+        count = mask.sum()
+        ratio = (count / total_count * 100) if total_count > 0 else 0
+        counts.append(count)
+        ratios.append(ratio)
+        
+        # 기본 출력
+        print(f"  {bin_labels[i]}: {count} ({ratio:.2f}%)", end='')
+        
+        # 10^3 구간일 경우 개별 rank 값들 출력
+        if i == 2:  # 10^3 (101-1000) 구간
+            if count > 0:
+                # 해당 구간의 데이터만 추출
+                range_data = ranking_data[mask]
+                unique_ranks, unique_counts = np.unique(range_data, return_counts=True)
+                
+                # rank 값들을 문자열로 변환
+                rank_details = ', '.join([f"{int(rank)}({cnt}개)" for rank, cnt in zip(unique_ranks, unique_counts)])
+                print(f" (rank= {rank_details})")
+            else:
+                print()
+        else:
+            print()
+    
+    # 1000 이상
+    above_1000 = (ranking_data >= 1001).sum()
+    above_1000_ratio = (above_1000 / total_count * 100) if total_count > 0 else 0
+    if above_1000 > 0:
+        print(f"  1000+: {above_1000} ({above_1000_ratio:.2f}%)")
+    
+    # NaN 처리
+    nan_count = np.isnan(ranking_data).sum()
+    nan_ratio = (nan_count / total_count * 100) if total_count > 0 else 0
+    if nan_count > 0:
+        print(f"  NaN: {nan_count} ({nan_ratio:.2f}%)")
+    
+    return counts, ratios
+
+# TP 분포
+tp_counts, tp_ratios = compute_distribution(tp_ranking.flatten(), tp_count, "TP")
+
+# FN 분포
+fn_counts, fn_ratios = compute_distribution(fn_ranking.flatten(), fn_count, "FN")
+
+# ======================== Linear scale 데이터 준비 ========================
+linear_bins = [2, 11, 21, 31, 41, 51, 61, 71, 81, 91, 101]
+linear_labels = ['2-10', '11-20', '21-30', '31-40', '41-50', 
+                 '51-60', '61-70', '71-80', '81-90', '91-100']
+
+def compute_linear_distribution(ranking_data, total_count):
+    """10 단위 구간별 분포 계산"""
+    counts = []
+    ratios = []
+    
+    for i in range(len(linear_bins) - 1):
+        mask = (ranking_data >= linear_bins[i]) & (ranking_data < linear_bins[i+1])
+        count = mask.sum()
+        ratio = (count / total_count * 100) if total_count > 0 else 0
+        counts.append(count)
+        ratios.append(ratio)
+    
+    return counts, ratios
+
+tp_linear_counts, tp_linear_ratios = compute_linear_distribution(tp_ranking.flatten(), tp_count)
+fn_linear_counts, fn_linear_ratios = compute_linear_distribution(fn_ranking.flatten(), fn_count)
+
+# ======================== Rank 2-10 데이터 준비 ========================
+def compute_top10_distribution(ranking_data, total_count):
+    """Rank 2-10 개별 분포 계산"""
+    counts = []
+    ratios = []
+    
+    for rank in range(2, 11):
+        count = (ranking_data == rank).sum()
+        ratio = (count / total_count * 100) if total_count > 0 else 0
+        counts.append(count)
+        ratios.append(ratio)
+    
+    return counts, ratios
+
+tp_top10_counts, tp_top10_ratios = compute_top10_distribution(tp_ranking.flatten(), tp_count)
+fn_top10_counts, fn_top10_ratios = compute_top10_distribution(fn_ranking.flatten(), fn_count)
+top10_labels = [str(i) for i in range(2, 11)]
+
+# ======================== 꺾은선 + CDF 그래프 생성 ========================
+print("\n>>> 꺾은선/CDF 그래프 생성 중...")
+
+fig_line = plt.figure(figsize=(26, 14))
+plt.rcParams.update({"font.size": 12})
+
+# x축 데이터 준비
+x_labels_log = bin_labels
+x_pos_log = np.arange(len(x_labels_log))
+x_pos_linear = np.arange(len(linear_labels))
+x_pos_top10 = np.arange(len(top10_labels))
+
+# --- 꺾은선 그래프 1 (1행 왼쪽): 로그 스케일 ---
+ax1 = plt.subplot(2, 3, 1)
+
+ax1.plot(x_pos_log, tp_ratios, marker='o', color='royalblue', linewidth=2, 
+         markersize=8, label=f'TP ({tp_count})')
+ax1.plot(x_pos_log, fn_ratios, marker='s', color='tomato', linewidth=2, 
+         markersize=8, label=f'FN ({fn_count})')
+
+ax1.set_xlabel('Ranking Range (Log Scale)', fontsize=14, fontweight='bold')
+ax1.set_ylabel('Ratio (%)', fontsize=14, fontweight='bold')
+ax1.set_title('Ranking Distribution: TP vs FN (Log Scale)', fontsize=16, fontweight='bold')
+ax1.set_xticks(x_pos_log)
+ax1.set_xticklabels(x_labels_log, rotation=15, ha='right')
+ax1.set_ylim(0, 100)
+ax1.grid(True, linestyle=':', alpha=0.6)
+ax1.legend(fontsize=12, loc='best')
+
+# --- 꺾은선 그래프 2 (1행 중간): Linear scale ---
+ax2 = plt.subplot(2, 3, 2)
+
+ax2.plot(x_pos_linear, tp_linear_ratios, marker='o', color='royalblue', linewidth=2, 
+         markersize=8, label=f'TP ({tp_count})')
+ax2.plot(x_pos_linear, fn_linear_ratios, marker='s', color='tomato', linewidth=2, 
+         markersize=8, label=f'FN ({fn_count})')
+
+ax2.set_xlabel('Ranking Range (10-unit intervals)', fontsize=14, fontweight='bold')
+ax2.set_ylabel('Ratio (%)', fontsize=14, fontweight='bold')
+ax2.set_title('Ranking Distribution: TP vs FN (Linear Scale)', fontsize=16, fontweight='bold')
+ax2.set_xticks(x_pos_linear)
+ax2.set_xticklabels(linear_labels, rotation=45, ha='right')
+ax2.set_ylim(0, 100)
+ax2.grid(True, linestyle=':', alpha=0.6)
+ax2.legend(fontsize=12, loc='best')
+
+# --- 꺾은선 그래프 3 (1행 오른쪽): Rank 2-10 ---
+ax3 = plt.subplot(2, 3, 3)
+
+ax3.plot(x_pos_top10, tp_top10_ratios, marker='o', color='royalblue', linewidth=2, 
+         markersize=8, label=f'TP ({tp_count})')
+ax3.plot(x_pos_top10, fn_top10_ratios, marker='s', color='tomato', linewidth=2, 
+         markersize=8, label=f'FN ({fn_count})')
+
+ax3.set_xlabel('Ranking Position', fontsize=14, fontweight='bold')
+ax3.set_ylabel('Ratio (%)', fontsize=14, fontweight='bold')
+ax3.set_title('Ranking Distribution: TP vs FN (Rank 2-10)', fontsize=16, fontweight='bold')
+ax3.set_xticks(x_pos_top10)
+ax3.set_xticklabels(top10_labels)
+ax3.set_ylim(0, 100)
+ax3.grid(True, linestyle=':', alpha=0.6)
+ax3.legend(fontsize=12, loc='best')
+
+# --- CDF 그래프 4 (2행 왼쪽): 로그 스케일 CDF ---
+ax4 = plt.subplot(2, 3, 4)
+
+tp_cdf_log = np.cumsum(tp_ratios)
+fn_cdf_log = np.cumsum(fn_ratios)
+
+ax4.plot(x_pos_log, tp_cdf_log, marker='o', color='royalblue', linewidth=2, 
+         markersize=8, label=f'TP ({tp_count})')
+ax4.plot(x_pos_log, fn_cdf_log, marker='s', color='tomato', linewidth=2, 
+         markersize=8, label=f'FN ({fn_count})')
+
+ax4.set_xlabel('Ranking Range (Log Scale)', fontsize=14, fontweight='bold')
+ax4.set_ylabel('Cumulative Ratio (%)', fontsize=14, fontweight='bold')
+ax4.set_title('Cumulative Distribution (CDF): TP vs FN (Log Scale)', fontsize=16, fontweight='bold')
+ax4.set_xticks(x_pos_log)
+ax4.set_xticklabels(x_labels_log, rotation=15, ha='right')
+ax4.set_ylim(0, 100)
+ax4.grid(True, linestyle=':', alpha=0.6)
+ax4.legend(fontsize=12, loc='best')
+
+# --- CDF 그래프 5 (2행 중간): Linear scale CDF ---
+ax5 = plt.subplot(2, 3, 5)
+
+tp_linear_sum = sum(tp_linear_counts)
+fn_linear_sum = sum(fn_linear_counts)
+
+tp_linear_ratios_normalized = [(c / tp_linear_sum * 100) if tp_linear_sum > 0 else 0 for c in tp_linear_counts]
+fn_linear_ratios_normalized = [(c / fn_linear_sum * 100) if fn_linear_sum > 0 else 0 for c in fn_linear_counts]
+
+tp_cdf_linear = np.cumsum(tp_linear_ratios_normalized)
+fn_cdf_linear = np.cumsum(fn_linear_ratios_normalized)
+
+ax5.plot(x_pos_linear, tp_cdf_linear, marker='o', color='royalblue', linewidth=2, 
+         markersize=8, label=f'TP ({tp_linear_sum})')
+ax5.plot(x_pos_linear, fn_cdf_linear, marker='s', color='tomato', linewidth=2, 
+         markersize=8, label=f'FN ({fn_linear_sum})')
+
+ax5.set_xlabel('Ranking Range (10-unit intervals)', fontsize=14, fontweight='bold')
+ax5.set_ylabel('Cumulative Ratio (%)', fontsize=14, fontweight='bold')
+ax5.set_title('Cumulative Distribution (CDF): TP vs FN (Linear Scale)', fontsize=16, fontweight='bold')
+ax5.set_xticks(x_pos_linear)
+ax5.set_xticklabels(linear_labels, rotation=45, ha='right')
+ax5.set_ylim(0, 100)
+ax5.grid(True, linestyle=':', alpha=0.6)
+ax5.legend(fontsize=12, loc='best')
+
+# --- CDF 그래프 6 (2행 오른쪽): Rank 2-10 CDF ---
+ax6 = plt.subplot(2, 3, 6)
+
+tp_top10_sum = sum(tp_top10_counts)
+fn_top10_sum = sum(fn_top10_counts)
+
+tp_top10_ratios_normalized = [(c / tp_top10_sum * 100) if tp_top10_sum > 0 else 0 for c in tp_top10_counts]
+fn_top10_ratios_normalized = [(c / fn_top10_sum * 100) if fn_top10_sum > 0 else 0 for c in fn_top10_counts]
+
+tp_cdf_top10 = np.cumsum(tp_top10_ratios_normalized)
+fn_cdf_top10 = np.cumsum(fn_top10_ratios_normalized)
+
+ax6.plot(x_pos_top10, tp_cdf_top10, marker='o', color='royalblue', linewidth=2, 
+         markersize=8, label=f'TP ({tp_top10_sum})')
+ax6.plot(x_pos_top10, fn_cdf_top10, marker='s', color='tomato', linewidth=2, 
+         markersize=8, label=f'FN ({fn_top10_sum})')
+
+ax6.set_xlabel('Ranking Position', fontsize=14, fontweight='bold')
+ax6.set_ylabel('Cumulative Ratio (%)', fontsize=14, fontweight='bold')
+ax6.set_title('Cumulative Distribution (CDF): TP vs FN (Rank 2-10)', fontsize=16, fontweight='bold')
+ax6.set_xticks(x_pos_top10)
+ax6.set_xticklabels(top10_labels)
+ax6.set_ylim(0, 100)
+ax6.grid(True, linestyle=':', alpha=0.6)
+ax6.legend(fontsize=12, loc='best')
+
+# 꺾은선 + CDF 그래프 저장
+plt.tight_layout()
+line_png_path = os.path.join(RESULTS_DIR, "re-ranking_rank_plot_line.png")
+plt.savefig(line_png_path, dpi=300)
+plt.close(fig_line)
+print(f">>> 꺾은선/CDF 그래프 저장 완료: {line_png_path}")
+
+print("\n" + "="*50)
+print(">>> 분석 완료!")
+print("="*50)
