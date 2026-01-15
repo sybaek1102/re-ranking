@@ -50,7 +50,7 @@ print(f"  - 랭킹≠1인 데이터 개수: {valid_mask.sum()}")
 ranking_valid = ranking_filtered[valid_mask]
 total_count = len(ranking_valid)
 
-print(f"\n>>> 전체 데이터 개수 (TP+FN): {total_count}")
+print(f"\n>>> total data (TP+FN): {total_count}")
 
 # ======================== 랭킹 분포 분석 ========================
 print("\n>>> 랭킹 분포 분석...")
@@ -88,7 +88,7 @@ x_pos = np.arange(len(bin_labels))
 bar_width = 0.5
 
 # 막대 그래프
-bars = ax.bar(x_pos, ratios, bar_width, color='steelblue', label=f'전체 (TP+FN) ({total_count})')
+bars = ax.bar(x_pos, ratios, bar_width, color='steelblue', label=f'total (TP+FN) ({total_count})')
 
 # 막대 위에 레이블 표시
 for i, bar in enumerate(bars):
