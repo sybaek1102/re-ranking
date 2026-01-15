@@ -17,7 +17,7 @@ OUTPUT_DIR = os.path.join(DATA_DIR, "output")
 
 FEATURE_PATH = os.path.join(INPUT_DIR, "residual-sign_features.npz")
 LABEL_PATH = os.path.join(INPUT_DIR, "residual-sign_label.npz")
-LOG_PATH = os.path.join(OUTPUT_DIR, "logs", "residual-sign_mlp_ver2.csv")
+LOG_PATH = os.path.join(OUTPUT_DIR, "logs", "residual-sign_mlp_no_subembed.csv")
 
 # 하이퍼파라미터
 BATCH_SIZE = 4096
@@ -25,7 +25,7 @@ LEARNING_RATE = 0.001
 EPOCHS = 100
 VAL_RATIO = 0.2
 THRESHOLD = 0.5 
-SUBSPACE_EMBED_DIM = 1      # 입력 feature 에 대한 특성을 subspace 차원에서 패턴을 확인해볼 수 있도록 subspace를 위한 임베딩 추가
+# SUBSPACE_EMBED_DIM 삭제 (더 이상 사용하지 않음)
 FEATURE_DIM = 18            # 첫번째 MLP 모델의 입력으로 들어가는 feature 차원
 EMBED_DIM = 8               # 두번째 MLP 모델의 입력으로 들어가는 임베딩된 feature 차원
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -53,7 +53,7 @@ X_train, X_val, y_train, y_val = train_test_split(
     X_np, y_np, 
     test_size=VAL_RATIO, 
     random_state=42, 
-    stratify=y_np       # label 비율이 33%(label 0) VS 66%(label 1) 이므로 train/val 에서 label 비율을 동일하게 나눔
+    stratify=y_np       
 )
 
 train_dataset = TensorDataset(torch.tensor(X_train), torch.tensor(y_train))
@@ -61,31 +61,24 @@ val_dataset = TensorDataset(torch.tensor(X_val), torch.tensor(y_val))
 print(f"  - Train Samples: {len(train_dataset)}")
 print(f"  - Val Samples: {len(val_dataset)}")
 
-# stratify 동작 확인
-train_pos_ratio = y_train.sum() / len(y_train)
-val_pos_ratio = y_val.sum() / len(y_val)
-print(f"  - Train Positive Ratio: {train_pos_ratio:.4f}")
-print(f"  - Val Positive Ratio:   {val_pos_ratio:.4f}")
-
 train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=4, pin_memory=True)
 val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=4, pin_memory=True)
 
-# 3. MLP model 설계
+# 3. MLP model 설계 (Embedding 삭제)
 class ResidualSignPredictionModel(nn.Module):
     def __init__(self):
         super(ResidualSignPredictionModel, self).__init__()
-        self.input_norm = nn.BatchNorm1d(FEATURE_DIM)               # input feature 배치단위 정규화
-        self.id_embedding = nn.Embedding(16, SUBSPACE_EMBED_DIM)    # subspace(16개) 에 대한 임베딩 추가
-        
-        # MLP1(임베딩): feature(18D) + subspace embedding(1D) -> 32D -> 8D: 19차원을 8차원으로 임베딩
+        self.input_norm = nn.BatchNorm1d(FEATURE_DIM)               
+                
+        # MLP1: feature(18D) -> 32D -> 8D 
         self.shared_mlp = nn.Sequential(                            
-            nn.Linear(FEATURE_DIM + SUBSPACE_EMBED_DIM, 32),
+            nn.Linear(FEATURE_DIM, 32), 
             nn.LeakyReLU(),
             nn.Linear(32, EMBED_DIM),
             nn.LeakyReLU() 
         )
         
-        # MLP2(residual 부호 예측): 8D+8D+...+8D(128D) -> 64D -> 1D: MLP1에서의 결과 concat 후 예측
+        # MLP2(residual 부호 예측): 8D*16개(128D) -> 64D -> 1D
         global_input_dim = 16 * EMBED_DIM
         self.global_mlp = nn.Sequential(
             nn.Linear(global_input_dim, 64),
@@ -94,8 +87,6 @@ class ResidualSignPredictionModel(nn.Module):
             nn.Sigmoid()
         )
         
-        self.subspace_indices = torch.arange(16, device=DEVICE)
-
     def forward(self, x):
         batch_size = x.size(0)
         x_flat = x.view(-1, FEATURE_DIM)
@@ -103,16 +94,10 @@ class ResidualSignPredictionModel(nn.Module):
         # 스케일링
         x_norm = self.input_norm(x_flat)
         
-        # subspace 정보 임베딩 -> 1D로 설정하면 id 처럼 사용 가능
-        ids = self.subspace_indices.repeat(batch_size) 
-        id_emb = self.id_embedding(ids) 
-        # feature + subspace 임베딩
-        combined = torch.cat([x_norm, id_emb], dim=1)
-
-        # MLP1(19D -> 32D -> 8D)
-        block_emb = self.shared_mlp(combined)
+        # MLP1 (18D -> 32D -> 8D)
+        block_emb = self.shared_mlp(x_norm)
         
-        # MLP2(8D*16개(128D) -> 64D -> 1D)
+        # MLP2 (8D*16개(128D) -> 64D -> 1D)
         global_input = block_emb.view(batch_size, -1)
         return self.global_mlp(global_input)
 
@@ -124,22 +109,18 @@ optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
 print("\n3. MLP model 설계")
 print(model)
 
-# metric 측정 함수: acc, loss, auc, precision, recall
+# metric 측정 함수
 def calculate_metrics(y_true, y_pred_prob):
     y_pred = (y_pred_prob >= THRESHOLD).astype(int)
     
-    # (1) accuracy
     acc = accuracy_score(y_true, y_pred)  
-
-    # (2) AUC          
     try:                                            
         auc = roc_auc_score(y_true, y_pred_prob)
     except:
-        auc = 0.0 # 예외) 한 클래스만 있을 경우
+        auc = 0.0 
 
-    # (3) precision, recall
     prec, rec, _, _ = precision_recall_fscore_support(y_true, y_pred, average=None, zero_division=0)
-    if len(prec) == 2: # 예외) 한 클래스만 있을 경우
+    if len(prec) == 2: 
         p0, p1 = prec[0], prec[1]
         r0, r1 = rec[0], rec[1]
     else:
@@ -238,7 +219,6 @@ for epoch in range(1, EPOCHS + 1):
 
 
 # 5. metric 결과 출력 및 csv 파일에 저장
-# 출력 디렉토리 생성
 os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
 
 df_history = pd.DataFrame(history)

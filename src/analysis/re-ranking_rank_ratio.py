@@ -81,15 +81,18 @@ if above_1000 > 0:
 # ======================== 그래프 생성 ========================
 print("\n>>> 그래프 생성 중...")
 
-fig, ax = plt.subplots(figsize=(10, 6))
+fig, ax = plt.subplots(figsize=(6, 6))
 plt.rcParams.update({"font.size": 12})
 
-x_pos = np.arange(len(bin_labels))
-bar_width = 0.5
+x_pos = np.arange(len(bin_labels))*0.6
+bar_width = 0.3
 
 # 막대 그래프
-bars = ax.bar(x_pos, ratios, bar_width, color='steelblue', label=f'total (TP+FN) ({total_count})')
-
+bars = ax.bar(x_pos, ratios, bar_width,
+              color='steelblue',       # 내부 색상
+              edgecolor='black',      # <-- 추가: 테두리 색상 (검정색)
+              linewidth=0.5,          # <-- 추가: 테두리 두께 (취향에 따라 조절)
+              label=f'total ({total_count})')
 # 막대 위에 레이블 표시
 for i, bar in enumerate(bars):
     height = bar.get_height()
@@ -99,7 +102,7 @@ for i, bar in enumerate(bars):
 
 ax.set_xlabel('Ranking Range (Log Scale)', fontsize=14, fontweight='bold')
 ax.set_ylabel('Ratio (%)', fontsize=14, fontweight='bold')
-ax.set_title('Overall Ranking Distribution (TP+FN Combined)', fontsize=16, fontweight='bold')
+ax.set_title('Overall Ranking Distribution', fontsize=16, fontweight='bold')
 ax.set_xticks(x_pos)
 ax.set_xticklabels(bin_labels, rotation=15, ha='right')
 ax.set_ylim(0, 100)
