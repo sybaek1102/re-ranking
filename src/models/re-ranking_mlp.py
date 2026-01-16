@@ -14,13 +14,13 @@ INPUT_DIR = os.path.join(DATA_DIR, "input")
 OUTPUT_DIR = os.path.join(DATA_DIR, "output")
 
 INPUT_PATH = os.path.join(INPUT_DIR, "re-ranking_features.npz")
-LOG_PATH = os.path.join(OUTPUT_DIR, "logs", "re-ranking_mlp.csv")
+LOG_PATH = os.path.join(OUTPUT_DIR, "logs", "re-ranking_mlp_val0.2.csv")
 
 # 하이퍼파라미터
 BATCH_SIZE = 128
 LEARNING_RATE = 0.001
 EPOCHS = 100
-VAL_RATIO = 0.1
+VAL_RATIO = 0.2
 THRESHOLD = 0.5
 
 # 1. 데이터 load & 전처리
