@@ -209,7 +209,7 @@ for i, (bar_tp, bar_fn) in enumerate(zip(bars_tp_log, bars_fn_log)):
 
 ax_bar1.set_xlabel('Ranking Range (Log Scale)', fontsize=14, fontweight='bold')
 ax_bar1.set_ylabel('Ratio (%)', fontsize=14, fontweight='bold')
-ax_bar1.set_title('Ranking Distribution: TP vs FN (Log Scale)', fontsize=16, fontweight='bold')
+ax_bar1.set_title('Ranking Distribution (Log Scale)', fontsize=16, fontweight='bold')
 ax_bar1.set_xticks(x_pos_log)
 ax_bar1.set_xticklabels(x_labels_log, rotation=15, ha='right')
 ax_bar1.set_ylim(0, 100)
@@ -238,7 +238,7 @@ for i in range(len(bars_tp_lin)):
 
 ax_bar2.set_xlabel('Ranking Range (10-unit intervals)', fontsize=14, fontweight='bold')
 ax_bar2.set_ylabel('Ratio (%)', fontsize=14, fontweight='bold')
-ax_bar2.set_title('Ranking Distribution: TP vs FN (Linear Scale)', fontsize=16, fontweight='bold')
+ax_bar2.set_title('Ranking Distribution (Rank 2-100)', fontsize=16, fontweight='bold')
 ax_bar2.set_xticks(x_pos_linear)
 ax_bar2.set_xticklabels(linear_labels, rotation=45, ha='right')
 ax_bar2.set_ylim(0, 100)
@@ -267,7 +267,7 @@ for i in range(len(bars_tp_top)):
 
 ax_bar3.set_xlabel('Ranking Position', fontsize=14, fontweight='bold')
 ax_bar3.set_ylabel('Ratio (%)', fontsize=14, fontweight='bold')
-ax_bar3.set_title('Ranking Distribution: TP vs FN (Rank 2-10)', fontsize=16, fontweight='bold')
+ax_bar3.set_title('Ranking Distribution (Rank 2-10)', fontsize=16, fontweight='bold')
 ax_bar3.set_xticks(x_pos_top10)
 ax_bar3.set_xticklabels(top10_labels)
 ax_bar3.set_ylim(0, 100)
