@@ -14,7 +14,7 @@ INPUT_DIR = os.path.join(DATA_DIR, "input")
 OUTPUT_DIR = os.path.join(DATA_DIR, "output")
 
 INPUT_PATH = os.path.join(INPUT_DIR, "re-ranking_features.npz")
-LOG_PATH = os.path.join(OUTPUT_DIR, "logs", "re-ranking_mlp_leakyrelu.csv")
+LOG_PATH = os.path.join(OUTPUT_DIR, "logs", "re-ranking_mlp.csv")
 
 # 하이퍼파라미터
 BATCH_SIZE = 128
@@ -57,7 +57,7 @@ class SimpleMLP(nn.Module):
         super(SimpleMLP, self).__init__()
         self.network = nn.Sequential(
             nn.Linear(16, 4),
-            nn.LeakyReLU(),
+            nn.ReLU(),
             nn.Linear(4, 1),
             nn.Sigmoid()
         )
@@ -78,7 +78,7 @@ best_val_acc = 0.0
 best_epoch_info = None
 
 for epoch in range(1, EPOCHS + 1):
-    # --- [Training Phase] ---
+    # Model training
     model.train()
     permutation = torch.randperm(X_train_tensor.size()[0])
     epoch_loss = 0
@@ -155,15 +155,11 @@ for epoch in range(1, EPOCHS + 1):
             f"Loss:{avg_t_loss:.4f} | Acc:{t_acc:.4f}/{v_acc:.4f} | AUC:{v_auc:.4f} | "
             f"R0:{v_rec[0]:.4f} R1:{v_rec[1]:.4f}")
 
-# -----------------------------------------------------------------------------
-# [Step 4] 로그 파일 저장
-# -----------------------------------------------------------------------------
-# 출력 디렉토리 생성
+# 5. 결과 저장
 os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
 
 df_history = pd.DataFrame(history)
 
-# 저장할 컬럼 순서 지정 (residual-sign_mlp.py와 동일한 형식)
 cols = [
     "epoch", 
     "train_loss", "val_loss",
@@ -183,7 +179,7 @@ print(f">>> 학습 종료.")
 print(f">>> 상세 로그 저장 완료: {LOG_PATH}")
 print("="*50)
 
-# 최종 확인
+# 6. console log 최종 확인
 print("\n[최종 Validation 상세 성능]")
 last_log = history[-1]
 print(f"Accuracy : {last_log['val_acc']:.4f}")

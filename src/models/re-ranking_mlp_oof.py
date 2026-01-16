@@ -6,9 +6,6 @@ import torch.optim as optim
 from sklearn.metrics import roc_auc_score, accuracy_score, precision_recall_fscore_support
 import os
 
-# -----------------------------------------------------------------------------
-# [Step 0] 설정: 경로 및 파라미터
-# -----------------------------------------------------------------------------
 # 파일 경로 설정 (상대 경로 사용)
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(SCRIPT_DIR, "../../data")
@@ -22,14 +19,12 @@ OOF_PATH = os.path.join(OUTPUT_DIR, "oof", "re-ranking_mlp_oof.npz")
 # 하이퍼파라미터
 BATCH_SIZE = 128
 LEARNING_RATE = 0.001
-MAX_EPOCHS = 100        # 최대 Epoch
+MAX_EPOCHS = 100        
 THRESHOLD = 0.5
 NUM_FOLDS = 10          # 10-Fold
 
-# -----------------------------------------------------------------------------
-# [Step 1] 데이터 로드
-# -----------------------------------------------------------------------------
-print(">>> 데이터 로딩 중...")
+# 1. 데이터 load & 전처리
+print("\n1. 데이터 load & 전처리")
 if not os.path.exists(INPUT_PATH):
     print(f"파일이 존재하지 않습니다: {INPUT_PATH}")
     exit()
@@ -42,16 +37,12 @@ y_numpy = dataset[:, -1].astype(np.float32).reshape(-1, 1)
 print(f"  - Feature Shape: {X_numpy.shape}")
 print(f"  - Label Shape: {y_numpy.shape}")
 
-# 전체 데이터 개수 및 인덱스 생성
+# 2. OOF 예측 결과물 저장을 위한 배열 초기화
 num_samples = len(X_numpy)
 all_indices = np.arange(num_samples)
-
-# OOF 예측 결과를 담을 배열 초기화 (확률값 저장용)
 oof_probs = np.zeros((num_samples, 1), dtype=np.float32)
 
-# -----------------------------------------------------------------------------
-# [Step 2] 모델 정의
-# -----------------------------------------------------------------------------
+# 3. MLP model 설계
 class SimpleMLP(nn.Module):
     def __init__(self):
         super(SimpleMLP, self).__init__()
@@ -65,19 +56,14 @@ class SimpleMLP(nn.Module):
     def forward(self, x):
         return self.network(x)
 
-# -----------------------------------------------------------------------------
-# [Step 3] 10-Fold Loop 및 학습
-# -----------------------------------------------------------------------------
+# 4. main 학습
+# fold chunk 생성
+print(f"\n4. main 학습 시작: {NUM_FOLDS}-Fold, Max Epochs: {MAX_EPOCHS}")
 fold_chunks = np.array_split(all_indices, NUM_FOLDS)
-
 history = []
 
-print(f"\n>>> {NUM_FOLDS}-Fold 학습 시작 (Max Epochs: {MAX_EPOCHS})")
-
 for fold in range(NUM_FOLDS):
-    # -------------------------------------------------------------------------
-    # 3-1. 데이터 분할 로직
-    # -------------------------------------------------------------------------
+    # 4-1. fold 에 맞게 test/val/train 세팅
     test_idx = fold_chunks[fold]
     val_idx = fold_chunks[(fold + 1) % NUM_FOLDS]
     
@@ -87,28 +73,24 @@ for fold in range(NUM_FOLDS):
             train_chunks.append(fold_chunks[i])
     train_idx = np.concatenate(train_chunks)
 
-    # Tensor 변환
     X_train = torch.tensor(X_numpy[train_idx])
     y_train = torch.tensor(y_numpy[train_idx])
     X_val = torch.tensor(X_numpy[val_idx])
     y_val = torch.tensor(y_numpy[val_idx])
     X_test = torch.tensor(X_numpy[test_idx])
 
-    # 모델 초기화 (Fold마다 새로 생성)
+    # 4-2. 모델 초기화 (Fold마다 새로 생성)
     model = SimpleMLP()
     criterion = nn.BCELoss()
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
-    # Best model tracking
     best_epoch_info = None
 
     print(f"\n[Fold {fold+1}/{NUM_FOLDS}] Train: {len(train_idx)}, Val: {len(val_idx)}, Test: {len(test_idx)}")
 
-    # --- Epoch Loop ---
+    # epoch loop
     for epoch in range(1, MAX_EPOCHS + 1):
-        # ---------------------
-        # [Training Phase]
-        # ---------------------
+        # Model training
         model.train()
         permutation = torch.randperm(X_train.size()[0])
         epoch_loss = 0
@@ -130,7 +112,7 @@ for fold in range(NUM_FOLDS):
             train_probs_list.append(outputs.detach().cpu().numpy())
             train_labels_list.append(batch_y.detach().cpu().numpy())
 
-        # Train Metrics
+        # Train metrics
         avg_train_loss = epoch_loss / (len(X_train) // BATCH_SIZE) if len(X_train) >= BATCH_SIZE else epoch_loss
         train_probs_concat = np.concatenate(train_probs_list)
         train_labels_concat = np.concatenate(train_labels_list)
@@ -140,9 +122,7 @@ for fold in range(NUM_FOLDS):
         train_acc = accuracy_score(train_labels_concat, train_preds)
         tr_prec, tr_rec, _, _ = precision_recall_fscore_support(train_labels_concat, train_preds, average=None, zero_division=0)
 
-        # ---------------------
-        # [Validation Phase]
-        # ---------------------
+        # Validation
         model.eval()
         with torch.no_grad():
             val_outputs = model(X_val)
@@ -155,9 +135,7 @@ for fold in range(NUM_FOLDS):
             val_acc = accuracy_score(val_labels, val_preds)
             val_prec, val_rec, _, _ = precision_recall_fscore_support(val_labels, val_preds, average=None, zero_division=0)
 
-        # ---------------------
-        # [Logging]
-        # ---------------------
+        # Logging
         log_entry = {
             "fold": fold + 1,
             "epoch": epoch,
@@ -189,28 +167,24 @@ for fold in range(NUM_FOLDS):
         #       f"Loss:{avg_train_loss:.4f} | Acc:{train_acc:.4f}/{val_acc:.4f} | AUC:{val_auc:.4f} | "
         #       f"R0:{val_rec[0]:.4f} R1:{val_rec[1]:.4f}")
 
-    # --- Fold 완료 후 Test 예측 ---
+    # fold 완료 후 test 예측
     model.eval()
     with torch.no_grad():
         test_outputs = model(X_test)
         test_probs_fold = test_outputs.cpu().numpy()
     
-    # 결과 저장 (Global Array에 인덱스 맞춰 넣기)
     oof_probs[test_idx] = test_probs_fold
 
-    # Fold 완료 후 Best Epoch 정보 출력
+    # fold 완료 후 Best Epoch 정보 출력
     if best_epoch_info:
         print(f"  >> [Fold {fold+1} Best Result] Epoch: {best_epoch_info['epoch']}, "
               f"Val Loss: {best_epoch_info['val_loss']:.4f}, Val Acc: {best_epoch_info['val_acc']:.4f}")
 
-# -----------------------------------------------------------------------------
-# [Step 4] 결과 저장 (CSV & NPZ)
-# -----------------------------------------------------------------------------
-# 1. CSV 로그 저장
+# 5. 결과 저장 (CSV & NPZ)
+# 5-1. CSV 로그 저장
 os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
 df_history = pd.DataFrame(history)
 
-# 컬럼 순서 정리
 cols = [
     "fold", "epoch", 
     "train_loss", "val_loss",
@@ -225,7 +199,7 @@ df_history = df_history[cols]
 df_history.to_csv(LOG_PATH, index=False)
 print(f"\n>>> 상세 로그 저장 완료: {LOG_PATH}")
 
-# 2. NPZ 파일 저장 (Pred Label, Pred Prob 추가)
+# 5-2. NPZ 파일 저장 (Pred Label, Pred Prob 추가)
 os.makedirs(os.path.dirname(OOF_PATH), exist_ok=True)
 oof_preds = (oof_probs >= THRESHOLD).astype(np.float32)
 
