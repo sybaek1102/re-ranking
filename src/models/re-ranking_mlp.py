@@ -14,7 +14,7 @@ INPUT_DIR = os.path.join(DATA_DIR, "input")
 OUTPUT_DIR = os.path.join(DATA_DIR, "output")
 
 INPUT_PATH = os.path.join(INPUT_DIR, "re-ranking_features.npz")
-LOG_PATH = os.path.join(OUTPUT_DIR, "logs", "re-ranking_mlp.csv")
+LOG_PATH = os.path.join(OUTPUT_DIR, "logs", "re-ranking_mlp_leakyrelu.csv")
 
 # 하이퍼파라미터
 BATCH_SIZE = 128
@@ -57,7 +57,7 @@ class SimpleMLP(nn.Module):
         super(SimpleMLP, self).__init__()
         self.network = nn.Sequential(
             nn.Linear(16, 4),
-            nn.ReLU(),
+            nn.LeakyReLU(),
             nn.Linear(4, 1),
             nn.Sigmoid()
         )
