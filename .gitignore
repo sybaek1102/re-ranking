@@ -212,7 +212,7 @@ data/raw/
 
 # 2. Features 폴더 무시 (요청하신 대로 로컬에만 보존)
 src/features/
-# (혹시 'data/input'에 있는 npz 파일을 말씀하신 거라면 'data/input/'을 적으세요)
+statistics/
 
 # 3. 기타 시스템 파일 등
 __pycache__/
