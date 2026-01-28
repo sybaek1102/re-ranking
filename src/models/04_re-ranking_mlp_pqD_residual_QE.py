@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.optim as optim
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import roc_auc_score, accuracy_score, precision_recall_fscore_support
-from sklearn.preprocessing import StandardScaler # 추가
+from sklearn.preprocessing import StandardScaler
 import os
 
 # 파일 경로 설정
@@ -14,9 +14,9 @@ DATA_DIR = os.path.join(SCRIPT_DIR, "../../data")
 INPUT_DIR = os.path.join(DATA_DIR, "input")
 OUTPUT_DIR = os.path.join(DATA_DIR, "output")
 
-# 입력 파일 및 로그 파일 경로 수정
-INPUT_PATH = os.path.join(INPUT_DIR, "re-ranking_features_dist.npz")
-LOG_PATH = os.path.join(OUTPUT_DIR, "logs", "re-ranking_mlp_dist.csv")
+# [수정] 입력 파일명 변경 (QE 버전)
+INPUT_PATH = os.path.join(INPUT_DIR, "04_re-ranking_features_pqD_residual_QE.npz")
+LOG_PATH = os.path.join(OUTPUT_DIR, "logs", "04_re-ranking_mlp_pqD_residual_QE.csv")
 
 # 하이퍼파라미터
 BATCH_SIZE = 128
@@ -29,14 +29,18 @@ THRESHOLD = 0.5
 print("\n1. 데이터 load & 전처리")
 if not os.path.exists(INPUT_PATH):
     print(f"파일이 존재하지 않습니다: {INPUT_PATH}")
+    # 혹시 norm으로 저장했을 경우를 대비해 안내
+    print("참고: 이전 단계에서 'norm'으로 저장하셨다면 파일명을 확인해주세요.")
     exit()
 
 data = np.load(INPUT_PATH)
 dataset = data['data'] 
 
+# [수정] Feature 개수가 48개인지 확인 (0~47: Feature, 48: Label)
 X_numpy = dataset[:, :-1].astype(np.float32)
 y_numpy = dataset[:, -1].astype(np.float32).reshape(-1, 1)
 
+print(f"  - Total Feature Shape: {X_numpy.shape}") # (N, 48) Expected
 print(f"  - Raw Feature Mean: {np.mean(X_numpy):.4f}, Std: {np.std(X_numpy):.4f}")
 
 # 2. train & val split 및 Scaling
@@ -45,30 +49,58 @@ X_train_raw, X_val_raw, y_train, y_val = train_test_split(
     X_numpy, y_numpy, test_size=VAL_RATIO, random_state=42, stratify=y_numpy
 )
 
-# [핵심 수정] StandardScaler 적용
-# Train 데이터를 기준으로 학습(fit)하고, Val 데이터는 train 기준에 맞춰 변환(transform)만 수행
-scaler = StandardScaler()
-X_train = scaler.fit_transform(X_train_raw)
-X_val = scaler.transform(X_val_raw)
+# [핵심 수정] 3개 그룹별 개별 Scaling 적용
+print("  >>> Feature 3개 그룹(PQ_Dist, Residual, QE)별 개별 Scaling 적용 중...")
 
+# 그룹 분리 (각 16차원씩)
+# 0~15: PQ Dist / 16~31: Residual / 32~47: Quantization Error
+X_train_f1 = X_train_raw[:, :16]
+X_train_f2 = X_train_raw[:, 16:32]
+X_train_f3 = X_train_raw[:, 32:]
+
+X_val_f1 = X_val_raw[:, :16]
+X_val_f2 = X_val_raw[:, 16:32]
+X_val_f3 = X_val_raw[:, 32:]
+
+# 각각의 Scaler 정의
+scaler_f1 = StandardScaler()
+scaler_f2 = StandardScaler()
+scaler_f3 = StandardScaler()
+
+# 각각 Fit & Transform (Train 기준)
+X_train_f1_scaled = scaler_f1.fit_transform(X_train_f1)
+X_train_f2_scaled = scaler_f2.fit_transform(X_train_f2)
+X_train_f3_scaled = scaler_f3.fit_transform(X_train_f3)
+
+# Transform (Validation은 Train 기준으로 변환만)
+X_val_f1_scaled = scaler_f1.transform(X_val_f1)
+X_val_f2_scaled = scaler_f2.transform(X_val_f2)
+X_val_f3_scaled = scaler_f3.transform(X_val_f3)
+
+# 다시 병합 (Concatenate)
+X_train = np.hstack([X_train_f1_scaled, X_train_f2_scaled, X_train_f3_scaled])
+X_val = np.hstack([X_val_f1_scaled, X_val_f2_scaled, X_val_f3_scaled])
+
+# Tensor 변환
 X_train_tensor = torch.tensor(X_train)
 y_train_tensor = torch.tensor(y_train)
 X_val_tensor = torch.tensor(X_val)
 y_val_tensor = torch.tensor(y_val)
 
-print(f"  - Scaled Train Mean: {np.mean(X_train):.4f}, Std: {np.std(X_train):.4f}")
+print(f"  - Scaled Train Shape: {X_train.shape}")
 print(f"  - Train Samples: {len(X_train_tensor)}")
 print(f"  - Val Samples: {len(X_val_tensor)}")
 
-# 3. MLP model 설계 (구조 유지)
+# 3. MLP model 설계 (입력 차원 수정)
 print("\n3. MLP model 설계")
 class SimpleMLP(nn.Module):
     def __init__(self):
         super(SimpleMLP, self).__init__()
+        # [수정] 입력 차원 48 (16*3) -> 은닉층 16 -> 출력 1
         self.network = nn.Sequential(
-            nn.Linear(16, 4),
+            nn.Linear(48, 8),
             nn.ReLU(),
-            nn.Linear(4, 1),
+            nn.Linear(8, 1),
             nn.Sigmoid()
         )
 

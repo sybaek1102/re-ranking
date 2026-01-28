@@ -11,8 +11,8 @@ INPUT_DIR = os.path.join(DATA_DIR, "input")
 OUTPUT_DIR = os.path.join(DATA_DIR, "output")
 
 STATUS_PATH = os.path.join(INPUT_DIR, "re-ranking_status_label.npz")
-OOF_PATH = os.path.join(OUTPUT_DIR, "oof", "re-ranking_mlp_dist_oof.npz")
-SAVE_FIG_PATH = "/home/syback/vectorDB/re-ranking/results/analysis/re-ranking_dist_label_ratio.png"
+OOF_PATH = os.path.join(OUTPUT_DIR, "oof", "04_re-ranking_mlp_pqD_residual_QE_oof.npz")
+SAVE_FIG_PATH = "/home/syback/vectorDB/re-ranking/results/analysis/re-ranking_pqD_residual_QE_label_ratio.png"
 
 # 데이터 로드
 status_data = np.load(STATUS_PATH)['status_label'].flatten()

@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from sklearn.metrics import roc_auc_score, accuracy_score, precision_recall_fscore_support
-from sklearn.preprocessing import StandardScaler # 추가
+from sklearn.preprocessing import StandardScaler
 import os
 
 # 파일 경로 설정
@@ -13,10 +13,10 @@ DATA_DIR = os.path.join(SCRIPT_DIR, "../../data")
 INPUT_DIR = os.path.join(DATA_DIR, "input")
 OUTPUT_DIR = os.path.join(DATA_DIR, "output")
 
-# 입력 및 출력 파일명 수정
-INPUT_PATH = os.path.join(INPUT_DIR, "re-ranking_features_dist.npz")
-LOG_PATH = os.path.join(OUTPUT_DIR, "logs", "re-ranking_mlp_dist_oof.csv")
-OOF_PATH = os.path.join(OUTPUT_DIR, "oof", "re-ranking_mlp_dist_oof.npz")
+# [수정] 입력 파일 및 출력 경로 변경 (pqD_residual 버전)
+INPUT_PATH = os.path.join(INPUT_DIR, "03_re-ranking_features_pqD_residual.npz")
+LOG_PATH = os.path.join(OUTPUT_DIR, "logs", "03_re-ranking_mlp_pqD_residual_oof.csv")
+OOF_PATH = os.path.join(OUTPUT_DIR, "oof", "03_re-ranking_mlp_pqD_residual_oof.npz")
 
 # 하이퍼파라미터
 BATCH_SIZE = 128
@@ -34,9 +34,11 @@ if not os.path.exists(INPUT_PATH):
 data = np.load(INPUT_PATH)
 dataset = data['data'] 
 
+# [수정] Feature 개수가 32개인지 확인 (0~31: Feature, 32: Label)
 X_numpy = dataset[:, :-1].astype(np.float32)
 y_numpy = dataset[:, -1].astype(np.float32).reshape(-1, 1)
-print(f"  - Feature Shape: {X_numpy.shape}")
+
+print(f"  - Total Feature Shape: {X_numpy.shape}")
 print(f"  - Label Shape: {y_numpy.shape}")
 
 # 2. OOF 예측 결과물 저장을 위한 배열 초기화
@@ -44,14 +46,15 @@ num_samples = len(X_numpy)
 all_indices = np.arange(num_samples)
 oof_probs = np.zeros((num_samples, 1), dtype=np.float32)
 
-# 3. MLP model 설계
+# 3. MLP model 설계 (입력 차원 수정)
 class SimpleMLP(nn.Module):
     def __init__(self):
         super(SimpleMLP, self).__init__()
+        # [수정] 입력 차원 16 -> 32 / 은닉층 4 -> 8
         self.network = nn.Sequential(
-            nn.Linear(16, 4),
+            nn.Linear(32, 8),
             nn.ReLU(),
-            nn.Linear(4, 1),
+            nn.Linear(8, 1),
             nn.Sigmoid()
         )
 
@@ -74,16 +77,37 @@ for fold in range(NUM_FOLDS):
             train_chunks.append(fold_chunks[i])
     train_idx = np.concatenate(train_chunks)
 
-    # [핵심 수정] Fold별 StandardScaler 적용
-    # 해당 Fold의 Train 인덱스 데이터로만 Scaler를 학습(fit)
-    scaler = StandardScaler()
+    # [핵심 수정] Fold별 독립적인 Split Scaling 적용
+    # -------------------------------------------------------------
+    # 1) Raw 데이터 슬라이싱
     X_train_raw = X_numpy[train_idx]
     X_val_raw = X_numpy[val_idx]
     X_test_raw = X_numpy[test_idx]
 
-    X_train_scaled = scaler.fit_transform(X_train_raw)
-    X_val_scaled = scaler.transform(X_val_raw)
-    X_test_scaled = scaler.transform(X_test_raw)
+    # 2) Feature 그룹 분리 (앞 16개 / 뒤 16개)
+    X_train_f1, X_train_f2 = X_train_raw[:, :16], X_train_raw[:, 16:]
+    X_val_f1, X_val_f2 = X_val_raw[:, :16], X_val_raw[:, 16:]
+    X_test_f1, X_test_f2 = X_test_raw[:, :16], X_test_raw[:, 16:]
+
+    # 3) Scaler 정의 및 Train 데이터로 Fit
+    scaler_f1 = StandardScaler()
+    scaler_f2 = StandardScaler()
+
+    X_train_f1_scaled = scaler_f1.fit_transform(X_train_f1)
+    X_train_f2_scaled = scaler_f2.fit_transform(X_train_f2)
+
+    # 4) Val, Test 데이터는 Train 기준 Scaler로 Transform만 수행
+    X_val_f1_scaled = scaler_f1.transform(X_val_f1)
+    X_val_f2_scaled = scaler_f2.transform(X_val_f2)
+
+    X_test_f1_scaled = scaler_f1.transform(X_test_f1)
+    X_test_f2_scaled = scaler_f2.transform(X_test_f2)
+
+    # 5) 다시 병합 (Concatenate)
+    X_train_scaled = np.hstack([X_train_f1_scaled, X_train_f2_scaled])
+    X_val_scaled = np.hstack([X_val_f1_scaled, X_val_f2_scaled])
+    X_test_scaled = np.hstack([X_test_f1_scaled, X_test_f2_scaled])
+    # -------------------------------------------------------------
 
     # 텐서 변환
     X_train = torch.tensor(X_train_scaled)
@@ -142,7 +166,7 @@ for fold in range(NUM_FOLDS):
             val_acc = accuracy_score(val_labels, val_preds)
             val_prec, val_rec, _, _ = precision_recall_fscore_support(val_labels, val_preds, average=None, zero_division=0)
 
-        # Log entry 생성 (구조 유지)
+        # Log entry 생성
         log_entry = {
             "fold": fold + 1, "epoch": epoch, "train_loss": avg_train_loss, "train_acc": train_acc, "train_auc": train_auc,
             "train_prec0": tr_prec[0], "train_rec0": tr_rec[0], "train_prec1": tr_prec[1], "train_rec1": tr_rec[1],
