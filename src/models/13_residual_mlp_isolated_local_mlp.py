@@ -19,7 +19,7 @@ OUTPUT_DIR = os.path.join(DATA_DIR, "output")
 
 FEATURE_PATH = os.path.join(INPUT_DIR, "11_residual_features.npz")
 LABEL_PATH = os.path.join(INPUT_DIR, "11_residual_label.npz")
-LOG_PATH = os.path.join(OUTPUT_DIR, "logs", "11_residual_mlp.csv")
+LOG_PATH = os.path.join(OUTPUT_DIR, "logs", "13_residual_mlp_isolated_local_mlp.csv")
 
 # =====================================================================
 # 하이퍼파라미터
@@ -31,19 +31,16 @@ VAL_RATIO = 0.2
 PATIENCE = 15  # Early stopping
 
 # 모델 구조
+NUM_SUBSPACES = 16      # Subspace 개수
 FEATURE_DIM = 14        # 각 subspace feature 차원
-SHARED_HIDDEN = 32      # Shared MLP 중간 차원
-EMBED_DIM = 8           # Shared MLP 출력 차원
+LOCAL_HIDDEN = 32       # Local MLP 중간 차원
+EMBED_DIM = 8           # Local MLP 출력 차원
 GLOBAL_HIDDEN = 64      # Global MLP 중간 차원
-
-# Multi-Task Loss 가중치
-ALPHA = 0.1   # Local loss weight (보조)
-BETA = 0.9    # Global loss weight (주요)
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 print(f"🔧 Device: {DEVICE}")
-print(f"📊 Multi-Task Weights: Alpha={ALPHA}, Beta={BETA}")
+print(f"📊 Model: {NUM_SUBSPACES} Isolated Local MLPs")
 
 # =====================================================================
 # 1. 데이터 로드 & 전처리
@@ -65,13 +62,9 @@ y_np = np.load(LABEL_PATH)["data"].astype(np.float32)    # (160000, 16, 1)
 print(f"✓ Feature Shape: {X_np.shape}")
 print(f"✓ Label Shape: {y_np.shape}")
 
-# Local labels: 각 subspace별 값
-y_local = y_np  # (160000, 16, 1)
-
 # Global labels: 16개 subspace의 합
 y_global = np.sum(y_np, axis=1)  # (160000, 1)
 
-print(f"✓ Local Label Shape: {y_local.shape}")
 print(f"✓ Global Label Shape: {y_global.shape}")
 
 # 통계 확인
@@ -86,13 +79,8 @@ y_global_mean = y_global.mean()
 y_global_std = y_global.std()
 y_global_normalized = (y_global - y_global_mean) / y_global_std
 
-y_local_mean = y_local.mean()
-y_local_std = y_local.std()
-y_local_normalized = (y_local - y_local_mean) / y_local_std
-
 print(f"\n✓ Normalization Applied:")
 print(f"   Global: mean={y_global_mean:.2f}, std={y_global_std:.2f}")
-print(f"   Local: mean={y_local_mean:.2f}, std={y_local_std:.2f}")
 
 # =====================================================================
 # 2. Train & Val Split
@@ -108,8 +96,6 @@ train_idx, val_idx = train_test_split(
 
 X_train = X_np[train_idx]
 X_val = X_np[val_idx]
-y_local_train = y_local_normalized[train_idx]
-y_local_val = y_local_normalized[val_idx]
 y_global_train = y_global_normalized[train_idx]
 y_global_val = y_global_normalized[val_idx]
 
@@ -122,12 +108,10 @@ print(f"✓ Val Samples: {len(val_idx)}")
 # DataLoader 생성
 train_dataset = TensorDataset(
     torch.tensor(X_train),
-    torch.tensor(y_local_train),
     torch.tensor(y_global_train)
 )
 val_dataset = TensorDataset(
     torch.tensor(X_val),
-    torch.tensor(y_local_val),
     torch.tensor(y_global_val)
 )
 
@@ -137,44 +121,33 @@ val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False,
                        num_workers=4, pin_memory=True)
 
 # =====================================================================
-# 3. Multi-Task Model 설계
+# 3. Isolated Local MLP Model 설계
 # =====================================================================
 print("\n" + "="*70)
-print("3️⃣  Multi-Task Model 설계")
+print("3️⃣  Isolated Local MLP Model 설계")
 print("="*70)
 
-class MultiTaskDistancePredictor(nn.Module):
+class IsolatedLocalMLPPredictor(nn.Module):
     def __init__(self):
-        super(MultiTaskDistancePredictor, self).__init__()
+        super(IsolatedLocalMLPPredictor, self).__init__()
         
-        # Input normalization
-        self.input_norm = nn.BatchNorm1d(FEATURE_DIM)
+        # 16개의 독립적인 Local MLP 생성
+        self.local_mlps = nn.ModuleList([
+            nn.Sequential(
+                nn.BatchNorm1d(FEATURE_DIM),
+                nn.Linear(FEATURE_DIM, LOCAL_HIDDEN),
+                nn.LeakyReLU(0.1),
+                nn.Linear(LOCAL_HIDDEN, EMBED_DIM),
+                nn.LeakyReLU(0.1)
+            )
+            for _ in range(NUM_SUBSPACES)
+        ])
         
-        # Shared MLP: (14) → (32) → (8)
-        self.shared_mlp = nn.Sequential(
-            nn.Linear(FEATURE_DIM, SHARED_HIDDEN),
-            nn.LayerNorm(SHARED_HIDDEN),
-            nn.LeakyReLU(0.1),
-            nn.Dropout(0.1),
-            nn.Linear(SHARED_HIDDEN, EMBED_DIM),
-            nn.LayerNorm(EMBED_DIM),
-            nn.LeakyReLU(0.1)
-        )
-        
-        # Local Head: 각 subspace 거리 예측
-        self.local_head = nn.Sequential(
-            nn.Linear(EMBED_DIM, 4),
-            nn.LeakyReLU(0.1),
-            nn.Linear(4, 1)
-        )
-        
-        # Global Head: 전체 거리 예측
-        global_input_dim = 16 * EMBED_DIM  # 128
+        # Global MLP: 전체 거리 예측
+        global_input_dim = NUM_SUBSPACES * EMBED_DIM  # 128
         self.global_mlp = nn.Sequential(
             nn.Linear(global_input_dim, GLOBAL_HIDDEN),
-            nn.LayerNorm(GLOBAL_HIDDEN),
             nn.LeakyReLU(0.1),
-            nn.Dropout(0.2),
             nn.Linear(GLOBAL_HIDDEN, 32),
             nn.LeakyReLU(0.1),
             nn.Linear(32, 1)
@@ -184,27 +157,27 @@ class MultiTaskDistancePredictor(nn.Module):
         # x: (batch, 16, 14)
         batch_size = x.size(0)
         
-        # Flatten for shared processing
-        x_flat = x.view(-1, FEATURE_DIM)  # (batch*16, 14)
+        # 각 subspace별로 독립적인 local MLP 적용
+        embeddings_list = []
+        for i in range(NUM_SUBSPACES):
+            # 각 subspace의 feature 추출: (batch, 14)
+            x_subspace = x[:, i, :]
+            
+            # 해당 subspace의 local MLP 적용: (batch, 14) -> (batch, 8)
+            embedding = self.local_mlps[i](x_subspace)
+            embeddings_list.append(embedding)
         
-        # Input normalization
-        x_norm = self.input_norm(x_flat)
-        
-        # Shared encoding
-        embeddings = self.shared_mlp(x_norm)  # (batch*16, 8)
-        
-        # Local predictions (각 subspace별)
-        local_preds = self.local_head(embeddings)  # (batch*16, 1)
-        local_preds = local_preds.view(batch_size, 16, 1)
+        # 모든 embedding 결합: (batch, 16, 8) -> (batch, 128)
+        embeddings = torch.stack(embeddings_list, dim=1)  # (batch, 16, 8)
+        global_input = embeddings.view(batch_size, -1)    # (batch, 128)
         
         # Global prediction (전체)
-        global_input = embeddings.view(batch_size, -1)  # (batch, 128)
         global_pred = self.global_mlp(global_input)  # (batch, 1)
         
-        return local_preds, global_pred
+        return global_pred
 
 # 모델 초기화
-model = MultiTaskDistancePredictor().to(DEVICE)
+model = IsolatedLocalMLPPredictor().to(DEVICE)
 optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-5)
 scheduler = optim.lr_scheduler.ReduceLROnPlateau(
     optimizer, mode='min', factor=0.5, patience=5, verbose=True
@@ -279,64 +252,48 @@ patience_counter = 0
 for epoch in range(1, EPOCHS + 1):
     # ==================== Train ====================
     model.train()
-    train_loss_local_sum = 0
-    train_loss_global_sum = 0
-    train_loss_total_sum = 0
+    train_loss_sum = 0
     
-    for batch_X, batch_y_local, batch_y_global in train_loader:
+    for batch_X, batch_y_global in train_loader:
         batch_X = batch_X.to(DEVICE)
-        batch_y_local = batch_y_local.to(DEVICE)
         batch_y_global = batch_y_global.to(DEVICE)
         
         optimizer.zero_grad()
         
         # Forward
-        local_preds, global_pred = model(batch_X)
+        global_pred = model(batch_X)
         
         # Loss 계산
-        loss_local = nn.MSELoss()(local_preds, batch_y_local)
-        loss_global = nn.MSELoss()(global_pred, batch_y_global)
-        loss_total = ALPHA * loss_local + BETA * loss_global
+        loss = nn.MSELoss()(global_pred, batch_y_global)
         
         # Backward
-        loss_total.backward()
+        loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
         
-        train_loss_local_sum += loss_local.item()
-        train_loss_global_sum += loss_global.item()
-        train_loss_total_sum += loss_total.item()
+        train_loss_sum += loss.item()
     
-    avg_train_loss_local = train_loss_local_sum / len(train_loader)
-    avg_train_loss_global = train_loss_global_sum / len(train_loader)
-    avg_train_loss_total = train_loss_total_sum / len(train_loader)
+    avg_train_loss = train_loss_sum / len(train_loader)
     
     # ==================== Validation ====================
     model.eval()
-    val_loss_local_sum = 0
-    val_loss_global_sum = 0
-    val_loss_total_sum = 0
+    val_loss_sum = 0
     
     all_val_preds = []
     all_val_labels = []
     
     with torch.no_grad():
-        for batch_X, batch_y_local, batch_y_global in val_loader:
+        for batch_X, batch_y_global in val_loader:
             batch_X = batch_X.to(DEVICE)
-            batch_y_local = batch_y_local.to(DEVICE)
             batch_y_global = batch_y_global.to(DEVICE)
             
             # Forward
-            local_preds, global_pred = model(batch_X)
+            global_pred = model(batch_X)
             
             # Loss
-            loss_local = nn.MSELoss()(local_preds, batch_y_local)
-            loss_global = nn.MSELoss()(global_pred, batch_y_global)
-            loss_total = ALPHA * loss_local + BETA * loss_global
+            loss = nn.MSELoss()(global_pred, batch_y_global)
             
-            val_loss_local_sum += loss_local.item()
-            val_loss_global_sum += loss_global.item()
-            val_loss_total_sum += loss_total.item()
+            val_loss_sum += loss.item()
             
             # Denormalize for metrics
             global_pred_denorm = global_pred.cpu().numpy() * y_global_std + y_global_mean
@@ -346,25 +303,19 @@ for epoch in range(1, EPOCHS + 1):
         all_val_labels = y_global_val_original
         all_val_preds = np.concatenate(all_val_preds)
     
-    avg_val_loss_local = val_loss_local_sum / len(val_loader)
-    avg_val_loss_global = val_loss_global_sum / len(val_loader)
-    avg_val_loss_total = val_loss_total_sum / len(val_loader)
+    avg_val_loss = val_loss_sum / len(val_loader)
     
     # Metrics 계산
     val_metrics = calculate_metrics(all_val_labels, all_val_preds)
     
     # Learning rate scheduler
-    scheduler.step(avg_val_loss_total)
+    scheduler.step(avg_val_loss)
     
     # Log entry
     log_entry = {
         'epoch': epoch,
-        'train_loss_local': avg_train_loss_local,
-        'train_loss_global': avg_train_loss_global,
-        'train_loss_total': avg_train_loss_total,
-        'val_loss_local': avg_val_loss_local,
-        'val_loss_global': avg_val_loss_global,
-        'val_loss_total': avg_val_loss_total,
+        'train_loss': avg_train_loss,
+        'val_loss': avg_val_loss,
         'val_mse': val_metrics['mse'],
         'val_mae': val_metrics['mae'],
         'val_rmse': val_metrics['rmse'],
@@ -382,8 +333,8 @@ for epoch in range(1, EPOCHS + 1):
     history.append(log_entry)
     
     # Best model 체크
-    if avg_val_loss_total < best_val_loss:
-        best_val_loss = avg_val_loss_total
+    if avg_val_loss < best_val_loss:
+        best_val_loss = avg_val_loss
         best_epoch = epoch
         patience_counter = 0
     else:
@@ -391,7 +342,7 @@ for epoch in range(1, EPOCHS + 1):
     
     # Console 출력
     print(f"Epoch [{epoch:3d}/{EPOCHS}] "
-          f"Loss: {avg_train_loss_total:.4f}/{avg_val_loss_total:.4f} | "
+          f"Loss: {avg_train_loss:.4f}/{avg_val_loss:.4f} | "
           f"R²: {val_metrics['r2']:.4f} | "
           f"Corr: {val_metrics['corr']:.4f} | "
           f"NRMSE: {val_metrics['nrmse']:.4f} | "
@@ -420,9 +371,7 @@ best_log = df_history.iloc[best_epoch - 1]
 print(f"\n{'='*70}")
 print(f"🏆 Best Performance @ Epoch {best_epoch}")
 print(f"{'='*70}")
-print(f"  Total Loss:      {best_log['val_loss_total']:.4f}")
-print(f"  Global Loss:     {best_log['val_loss_global']:.4f}")
-print(f"  Local Loss:      {best_log['val_loss_local']:.4f}")
+print(f"  Validation Loss: {best_log['val_loss']:.4f}")
 print(f"{'-'*70}")
 print(f"  MSE:             {best_log['val_mse']:.2f}")
 print(f"  MAE:             {best_log['val_mae']:.2f}")

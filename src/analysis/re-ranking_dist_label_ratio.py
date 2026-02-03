@@ -11,7 +11,7 @@ INPUT_DIR = os.path.join(DATA_DIR, "input")
 OUTPUT_DIR = os.path.join(DATA_DIR, "output")
 
 STATUS_PATH = os.path.join(INPUT_DIR, "re-ranking_status_label.npz")
-OOF_PATH = os.path.join(OUTPUT_DIR, "oof", "21_re-ranking_pqD_pred_resD_oof.npz")
+OOF_PATH = os.path.join(OUTPUT_DIR, "oof", "22_re-ranking_mlp_pqD_pred_resD_oof.npz")
 SAVE_FIG_PATH = "/home/syback/vectorDB/re-ranking/results/analysis/re-ranking_mlp_pqD_pred_resD.png"
 
 # 데이터 로드
