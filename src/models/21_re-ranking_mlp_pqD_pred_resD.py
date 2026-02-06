@@ -15,8 +15,8 @@ INPUT_DIR = os.path.join(DATA_DIR, "input")
 OUTPUT_DIR = os.path.join(DATA_DIR, "output")
 
 # [수정] OOF 기반 feature 사용
-INPUT_PATH = os.path.join(INPUT_DIR, "23_re-ranking_pqD_pred_resD.npz")
-LOG_PATH = os.path.join(OUTPUT_DIR, "logs", "23_re-ranking_mlp_pqD_pred_resD.csv")
+INPUT_PATH = os.path.join(INPUT_DIR, "22_re-ranking_pqD_pred_resD_int8_norm_scaled_label.npz")
+LOG_PATH = os.path.join(OUTPUT_DIR, "logs", "22_re-ranking_pqD_pred_resD_int8_norm_scaled_label.csv")
 
 # 하이퍼파라미터
 BATCH_SIZE = 128
