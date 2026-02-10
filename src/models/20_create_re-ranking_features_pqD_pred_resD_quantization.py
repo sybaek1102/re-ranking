@@ -11,10 +11,10 @@ OUTPUT_DIR = os.path.join(DATA_DIR, "output")
 
 # 입력 파일
 ORIGINAL_FEATURE_PATH = os.path.join(INPUT_DIR, "03_re-ranking_features_pqD_residual.npz")
-OOF_PRED_PATH = os.path.join(OUTPUT_DIR, "oof", "12_residual_mlp_quantization_int8_norm_scaled_oof.npz")
+OOF_PRED_PATH = os.path.join(OUTPUT_DIR, "oof", "16_residual_mlp_resD_pq_no_cent_dot_oof.npz")
 
 # 출력 파일
-OUTPUT_FEATURE_PATH = os.path.join(INPUT_DIR, "22_re-ranking_pqD_pred_resD_int8_norm_scaled.npz")
+OUTPUT_FEATURE_PATH = os.path.join(INPUT_DIR, "26_re-ranking_pqD_pred_resD_pq_no_cent_dot.npz")
 
 print("="*70)
 print("📂 OOF 예측 기반 Re-ranking Feature 생성")

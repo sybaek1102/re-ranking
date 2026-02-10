@@ -10,11 +10,12 @@ INPUT_DIR = os.path.join(DATA_DIR, "input")
 OUTPUT_DIR = os.path.join(DATA_DIR, "output")
 
 # 입력 파일
-ORIGINAL_FEATURE_PATH = os.path.join(INPUT_DIR, "03_re-ranking_features_pqD_residual.npz")
-OOF_PRED_PATH = os.path.join(OUTPUT_DIR, "oof", "16_residual_mlp_resD_pq_no_cent_dot_oof.npz")
+ORIGINAL_FEATURE_PATH = os.path.join(INPUT_DIR, "03_re-ranking_features_pqD_residual.npz") # pqD
+OOF_PRED_PATH = os.path.join(OUTPUT_DIR, "oof", "16_residual_mlp_resD_pq_no_cent_dot_oof.npz") # resD
+NEW_LABEL_PATH = os.path.join(INPUT_DIR, "01_re-ranking_label.npz")  # label - state -1 == label 1
 
 # 출력 파일
-OUTPUT_FEATURE_PATH = os.path.join(INPUT_DIR, "26_re-ranking_pqD_pred_resD_pq_no_cent_dot.npz")
+OUTPUT_FEATURE_PATH = os.path.join(INPUT_DIR, "26_re-ranking_pqD_pred_resD_pq_no_cent_dot_label.npz")
 
 print("="*70)
 print("📂 OOF 예측 기반 Re-ranking Feature 생성")
@@ -31,12 +32,10 @@ with np.load(ORIGINAL_FEATURE_PATH) as f:
 
 print(f"✓ Original Data Shape: {original_data.shape}")
 
-# Feature와 Label 분리
+# Feature만 추출 (Label은 새로운 것을 사용할 예정)
 X_original = original_data[:, :-1]  # (160000, 32)
-y_original = original_data[:, -1:] # (160000, 1)
 
 print(f"✓ Original Features Shape: {X_original.shape}")
-print(f"✓ Original Label Shape: {y_original.shape}")
 
 # 앞 16개 feature만 추출 (PQ Distance)
 pq_dist_features = X_original[:, :16]  # (160000, 16)
@@ -52,15 +51,23 @@ with np.load(OOF_PRED_PATH) as f:
 
 print(f"✓ OOF Predictions Shape: {oof_preds.shape}")
 
+# 새로운 Label 로드
+with np.load(NEW_LABEL_PATH) as f:
+    new_labels = f['data']  # (10000, 1)
+
+print(f"✓ New Labels Shape: {new_labels.shape}")
+
 # =====================================================================
 # 2. 데이터 재구성 확인
 # =====================================================================
 print("\n2️⃣  데이터 형태 확인 및 재구성")
 
-# 원본 데이터가 이미 (10000, 32+1) 형태
-# OOF 예측은 (160000, 1) = (10000 x 16, 1) 형태
-print(f"✓ Original data는 이미 (10000, 32+1) 형태입니다.")
-print(f"✓ OOF predictions는 (160000, 1) = (10000 queries × 16 candidates) 형태입니다.")
+# 원본 데이터가 이미 (10000, 32) 형태로 reshape 필요
+pq_dist_features = pq_dist_features.reshape(10000, 16)
+residual_features = residual_features.reshape(10000, 16)
+
+print(f"✓ PQ Distance Features Reshaped: {pq_dist_features.shape}")
+print(f"✓ Residual Features Reshaped: {residual_features.shape}")
 
 # OOF 예측을 (10000, 16) 형태로 reshape
 oof_preds_reshaped = oof_preds.reshape(10000, 16)  # (10000, 16)
@@ -91,8 +98,8 @@ final_features = np.hstack([pq_dist_features, new_residual_features])  # (10000,
 
 print(f"✓ Final Features Shape: {final_features.shape}")
 
-# Label은 원본 그대로 사용
-final_labels = y_original  # (10000, 1)
+# Label은 새로 로드한 것 사용
+final_labels = new_labels  # (10000, 1)
 
 print(f"✓ Final Labels Shape: {final_labels.shape}")
 
@@ -142,7 +149,7 @@ print("\n" + "="*70)
 print("[Feature 구성 (33 dims)]")
 print("  - PQ Distance Features:     16 dims (앞 16개)")
 print("  - OOF-based Residual Dist:  16 dims (||R||² - 2*pred(⟨Q-C,R⟩))")
-print("  - Label:                     1 dim")
+print("  - Label:                     1 dim (01_re-ranking_label.npz 사용)")
 print("="*70)
 
 print("\n✅ 모든 작업 완료!")

@@ -11,11 +11,11 @@ OUTPUT_DIR = os.path.join(DATA_DIR, "output")
 
 # 입력 파일
 ORIGINAL_FEATURE_PATH = os.path.join(INPUT_DIR, "03_re-ranking_features_pqD_residual.npz") # pqD
-OOF_PRED_PATH = os.path.join(OUTPUT_DIR, "oof", "14_residual_mlp_full_oof.npz") # resD
+OOF_PRED_PATH = os.path.join(OUTPUT_DIR, "oof", "16_residual_mlp_resD_pq_no_cent_dot_oof.npz") # resD
 NEW_LABEL_PATH = os.path.join(INPUT_DIR, "01_re-ranking_label.npz")  # label - state -1 == label 1
 
 # 출력 파일
-OUTPUT_FEATURE_PATH = os.path.join(INPUT_DIR, "24_re-ranking_pqD_pred_resD_label.npz")
+OUTPUT_FEATURE_PATH = os.path.join(INPUT_DIR, "26_re-ranking_pqD_pred_resD_pq_no_cent_dot_label.npz")
 
 print("="*70)
 print("📂 OOF 예측 기반 Re-ranking Feature 생성")
@@ -83,7 +83,7 @@ print("\n3️⃣  새로운 Feature 계산")
 # residual_features는 (10000, 16) - 이미 ||R||^2 값
 # oof_preds_reshaped는 (10000, 16) - predicted(dot(Q-C, R))
 
-new_residual_features = residual_features - 2 * oof_preds_reshaped  # (10000, 16)
+new_residual_features = oof_preds_reshaped  # (10000, 16)
 
 print(f"✓ New Residual Features Shape: {new_residual_features.shape}")
 print(f"✓ New Residual Features - Mean: {new_residual_features.mean():.4f}, Std: {new_residual_features.std():.4f}")
