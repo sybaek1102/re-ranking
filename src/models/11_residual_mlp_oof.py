@@ -18,8 +18,8 @@ OUTPUT_DIR = os.path.join(DATA_DIR, "output")
 
 FEATURE_PATH = os.path.join(INPUT_DIR, "11_residual_features.npz")
 LABEL_PATH = os.path.join(INPUT_DIR, "11_residual_label.npz")
-LOG_PATH = os.path.join(OUTPUT_DIR, "logs", "12_residual_mlp_oof.csv")
-OOF_PATH = os.path.join(OUTPUT_DIR, "oof", "12_residual_mlp_oof.npz")
+LOG_PATH = os.path.join(OUTPUT_DIR, "logs", "11_residual_mlp_oof.csv")
+OOF_PATH = os.path.join(OUTPUT_DIR, "oof", "11_residual_mlp_oof.npz")
 
 # =====================================================================
 # 하이퍼파라미터

@@ -11,14 +11,19 @@ OUTPUT_DIR = os.path.join(DATA_DIR, "output")
 
 # 입력 파일
 ORIGINAL_FEATURE_PATH = os.path.join(INPUT_DIR, "03_re-ranking_features_pqD_residual.npz") # pqD
-OOF_PRED_PATH = os.path.join(OUTPUT_DIR, "oof", "18_residual_mlp_resD_pq_opt_final_dot_oof.npz") # resD
+OOF_PRED_PATH = os.path.join(OUTPUT_DIR, "oof", "11_residual_mlp_oof.npz") # resD
 NEW_LABEL_PATH = os.path.join(INPUT_DIR, "01_re-ranking_label.npz")  # label - state -1 == label 1
 
+# Raw 데이터 파일 (||X-P||² 직접 계산을 위해)
+RAW_DATA_PATH = os.path.join(DATA_DIR, "raw")
+BASE_FILE_PATH = os.path.join(RAW_DATA_PATH, "base.npz")
+QUERY_FILE_PATH = os.path.join(RAW_DATA_PATH, "query_1x16.npz")
+
 # 출력 파일
-OUTPUT_FEATURE_PATH = os.path.join(INPUT_DIR, "28_re-ranking_pq_pred_resD_pq_opt_final_dot_label.npz")
+OUTPUT_FEATURE_PATH = os.path.join(INPUT_DIR, "11_residual_mlp_oof_label.npz")
 
 print("="*70)
-print("📂 OOF 예측 기반 Re-ranking Feature 생성")
+print("📂 OOF 예측 기반 Re-ranking Feature 생성 (Direct ||X-P||² Calculation)")
 print("="*70)
 
 # =====================================================================
@@ -41,9 +46,20 @@ print(f"✓ Original Features Shape: {X_original.shape}")
 pq_dist_features = X_original[:, :16]  # (160000, 16)
 print(f"✓ PQ Distance Features Shape: {pq_dist_features.shape}")
 
-# 뒤 16개 feature (Residual 관련)
-residual_features = X_original[:, 16:]  # (160000, 16)
-print(f"✓ Residual Features Shape: {residual_features.shape}")
+# Raw 데이터 로드 (||X-P||² 직접 계산을 위해)
+print("\n📥 Raw 데이터 로드 중...")
+with np.load(BASE_FILE_PATH) as base_data:
+    base_raw = base_data["raw_vector"].astype(np.float32)  # (N, 128)
+    base_pq = base_data["pq_vector"].astype(np.float32)    # (N, 128)
+
+with np.load(QUERY_FILE_PATH) as query_data:
+    query_raw = query_data["raw_vector"].astype(np.float32)  # (10000, 128)
+    I_indices = query_data["I"].astype(np.int64)             # (10000, 16)
+
+print(f"✓ Base Raw Shape: {base_raw.shape}")
+print(f"✓ Base PQ Shape: {base_pq.shape}")
+print(f"✓ Query Raw Shape: {query_raw.shape}")
+print(f"✓ Indices Shape: {I_indices.shape}")
 
 # OOF 예측 결과 로드
 with np.load(OOF_PRED_PATH) as f:
@@ -58,32 +74,38 @@ with np.load(NEW_LABEL_PATH) as f:
 print(f"✓ New Labels Shape: {new_labels.shape}")
 
 # =====================================================================
-# 2. 데이터 재구성 확인
+# 2. ||X-P||² 직접 계산
 # =====================================================================
-print("\n2️⃣  데이터 형태 확인 및 재구성")
+print("\n2️⃣  ||X-P||² 직접 계산")
 
-# 원본 데이터가 이미 (10000, 32) 형태로 reshape 필요
+# 검색된 base 벡터들 가져오기
+retrieved_base_raw = base_raw[I_indices]  # (10000, 16, 128)
+retrieved_base_pq = base_pq[I_indices]    # (10000, 16, 128)
+
+# X - P 계산 (Residual)
+residual_xp = retrieved_base_raw - retrieved_base_pq  # (10000, 16, 128)
+
+# ||X-P||² 계산
+residual_normsq = np.sum(residual_xp ** 2, axis=2)  # (10000, 16)
+
+print(f"✓ ||X-P||² Shape: {residual_normsq.shape}")
+print(f"✓ ||X-P||² - Mean: {residual_normsq.mean():.4f}, Std: {residual_normsq.std():.4f}")
+
+# =====================================================================
+# 3. 데이터 재구성 및 Feature 계산
+# =====================================================================
+print("\n3️⃣  데이터 재구성 및 Feature 계산")
+
+# PQ Distance Features reshape
 pq_dist_features = pq_dist_features.reshape(10000, 16)
-residual_features = residual_features.reshape(10000, 16)
-
 print(f"✓ PQ Distance Features Reshaped: {pq_dist_features.shape}")
-print(f"✓ Residual Features Reshaped: {residual_features.shape}")
 
 # OOF 예측을 (10000, 16) 형태로 reshape
 oof_preds_reshaped = oof_preds.reshape(10000, 16)  # (10000, 16)
-
 print(f"✓ OOF Preds Reshaped: {oof_preds_reshaped.shape}")
 
-# =====================================================================
-# 3. 새로운 Feature 계산
-# =====================================================================
-print("\n3️⃣  새로운 Feature 계산")
-
-# ||R||^2 - 2 * predicted(dot(Q-C, R))
-# residual_features는 (10000, 16) - 이미 ||R||^2 값
-# oof_preds_reshaped는 (10000, 16) - predicted(dot(Q-C, R))
-
-new_residual_features = residual_features - 2 * oof_preds_reshaped  # (10000, 16)
+# ||X-P||² - 2 * predicted(dot(Q-P, X-P))
+new_residual_features = residual_normsq - 2 * oof_preds_reshaped  # (10000, 16)
 
 print(f"✓ New Residual Features Shape: {new_residual_features.shape}")
 print(f"✓ New Residual Features - Mean: {new_residual_features.mean():.4f}, Std: {new_residual_features.std():.4f}")
@@ -147,9 +169,14 @@ print(f"   - Label 1: {np.sum(loaded_data[:, -1] == 1)}")
 
 print("\n" + "="*70)
 print("[Feature 구성 (33 dims)]")
-print("  - PQ Distance Features:     16 dims (앞 16개)")
-print("  - OOF-based Residual Dist:  16 dims (||R||² - 2*pred(⟨Q-C,R⟩))")
+print("  - PQ Distance Features:     16 dims (||Q-P||²)")
+print("  - OOF-based Residual Dist:  16 dims (||X-P||² - 2*pred(⟨Q-P,X-P⟩)) [DIRECT]")
 print("  - Label:                     1 dim (01_re-ranking_label.npz 사용)")
+print("="*70)
+print("\n✅ 계산 방식:")
+print("   - ||X-P||²를 raw 벡터로 직접 계산")
+print("   - OOF 예측값으로 2*⟨Q-P,X-P⟩ 근사")
+print("   - 최종: ||X-P||² - 2*pred(⟨Q-P,X-P⟩)")
 print("="*70)
 
 print("\n✅ 모든 작업 완료!")
