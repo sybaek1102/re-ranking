@@ -11,7 +11,7 @@ OUTPUT_DIR = os.path.join(DATA_DIR, "output")
 
 # 입력 파일
 ORIGINAL_FEATURE_PATH = os.path.join(INPUT_DIR, "03_re-ranking_features_pqD_residual.npz") # pqD
-OOF_PRED_PATH = os.path.join(OUTPUT_DIR, "oof", "11_residual_mlp_oof.npz") # resD
+OOF_PRED_PATH = os.path.join(OUTPUT_DIR, "oof", "18_residual_mlp_resD_pq_opt_final_dot_oof.npz") # resD
 NEW_LABEL_PATH = os.path.join(INPUT_DIR, "01_re-ranking_label.npz")  # label - state -1 == label 1
 
 # Raw 데이터 파일 (||X-P||² 직접 계산을 위해)
@@ -20,7 +20,7 @@ BASE_FILE_PATH = os.path.join(RAW_DATA_PATH, "base.npz")
 QUERY_FILE_PATH = os.path.join(RAW_DATA_PATH, "query_1x16.npz")
 
 # 출력 파일
-OUTPUT_FEATURE_PATH = os.path.join(INPUT_DIR, "11_residual_mlp_oof_label.npz")
+OUTPUT_FEATURE_PATH = os.path.join(INPUT_DIR, "28_re-ranking_pq_pred_resD_pq_opt_final_dot_label.npz")
 
 print("="*70)
 print("📂 OOF 예측 기반 Re-ranking Feature 생성 (Direct ||X-P||² Calculation)")
